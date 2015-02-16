@@ -7,13 +7,14 @@ The implementation is based on:
     - Input-Output HMM's for Sequence processing
     - scikit-learn HMM implementation
 """
+from __future__ import division
 __author__ = 'weiwang'
 __email__ = 'tskatom@vt.edu'
 
-from __future__ import division
+
 import string
 import numpy as np
-from .util import extmath
+from util import extmath
 
 ZEROLOGPROB = -1e200
 EPS = np.finfo(float).eps
@@ -124,14 +125,13 @@ class _BaseIOHMM():
                 transmat[i] = prob
         return transmat
 
-    def _do_forward_pass(self, transmat, framelogprob, ins_seq):
+    def _do_forward_pass(self, transmat, framelogprob):
         """  Compute the forward lattice
         :param transmat:
         :param framelogprob:
-        :param ins_seq:
         :return: p(obs_seq|ins_seq) and p(x_t=i, y_(1:t)|u_(1:t))
         """
-        T = len(ins_seq)
+        T = len(framelogprob)
         fwdlattice = np.zeros((T, self.n_components))
         scaling_factors = np.zeros(T)
         fwdlattice[0] = np.dot(transmat[0].T, self.startprob[np.newaxis].T).flatten() * framelogprob[0]
@@ -143,8 +143,51 @@ class _BaseIOHMM():
             scaling_factors[t] = 1 / np.sum(fwdlattice[t])
             fwdlattice[t] = fwdlattice[t] * scaling_factors[t]
 
+        likelihood = np.exp(-1*np.sum(np.log(scaling_factors)))
+        self.scaling_factors = scaling_factors
+        return likelihood, fwdlattice
 
-        return np.exp(-1*np.sum(np.log(scaling_factors[-1]))), fwdlattice
+    def _do_backward_pass(self, transmat, framelogprob):
+        # using the same scalingfactor as forward_pass
+        T = len(framelogprob)
+        bwdlattice = np.ones((T, self.n_components))
+        bwdlattice[T-1] = bwdlattice[T-1] * self.scaling_factors[T-1]
+        for t in range(T-2, -1, -1):
+            for i in range(self.n_components):
+                bwdlattice[t][i] = .0
+                for j in range(self.n_components):
+                    bwdlattice[t][i] += transmat[t][i][j] * bwdlattice[t+1][j] * framelogprob[t+1][j]
+            bwdlattice[t] = bwdlattice[t] * self.scaling_factors[t]
+        return bwdlattice
+
+    def _test_do_forward_pass(self, transmat, framelogprob, ins_seq):
+        T = len(ins_seq)
+        fwdlattice = np.zeros((T, self.n_components))
+        scaling_factors = np.zeros(T)
+
+        #initiate the fwdlattice[0]
+        for i in range(self.n_components):
+            tmp = 0.0
+            for j in range(self.n_components):
+                tmp += transmat[0][j][i] * self.startprob[j]
+            fwdlattice[0][i] = tmp * framelogprob[0][i]
+        scaling_factors[0] = np.sum(fwdlattice[0])
+        fwdlattice[0] = fwdlattice[0] / scaling_factors[0]
+
+        for t in range(1, T):
+            for i in range(self.n_components):
+                tmp = .0
+                for j in range(self.n_components):
+                    tmp += transmat[t][j][i] * fwdlattice[t-1][j]
+                fwdlattice[t][i] = framelogprob[t][i] * tmp
+            scaling_factors[t] = np.sum(fwdlattice[t])
+            fwdlattice[t] = fwdlattice[t] / scaling_factors[t]
+
+        likelihood = np.exp(-1*np.sum(np.log(1/scaling_factors)))
+        return likelihood, fwdlattice
+
+
+
 
 
 

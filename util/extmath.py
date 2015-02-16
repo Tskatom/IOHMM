@@ -1,7 +1,8 @@
+from __future__ import division
 __author__ = 'Wei Wang'
 __email__ = "tskatom@vt.edu"
 
-from __future__ import division
+
 import numpy as np
 
 
