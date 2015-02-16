@@ -112,6 +112,22 @@ class _BaseIOHMM():
                 lpr, fwdlattice = self._do_forward_pass(transmat, framelogprob, ins_seq)
                 bwdlattice = self._do_backward_pass(transmat, framelogprob, ins_seq)
 
+                # compute the sufficient statistic: transition posterior and state posterior
+                self._compute_sufficient_static(self, transmat, framelogprob,
+                                                fwdlattice, bwdlattice, lpr)
+            logprob.append(lpr)
+            if i > 0 and logprob[-1] - logprob[-2] < self.thresh:
+                break
+
+            # Maximization step
+            self._do_mstep()
+
+    def _do_mstep(self):
+        # do maxization step in HMM. In base class we do M step to update the parameters for transition
+        # weight matrix
+        # Based on Yoshua Bengio, Paolo Frasconi. Input output HMM's for sequence processing
+
+
 
     def _compute_transmat(self, ins_seq):
         """ Compute the dynamic transition weight matrix for each time step"""
@@ -124,6 +140,31 @@ class _BaseIOHMM():
                 prob = extmath.softmax(np.dot(weightMat, u))
                 transmat[i] = prob
         return transmat
+
+    def _compute_sufficient_static(self, transmat, framelogprob, fwdlattice, bwdlattice, lpr):
+        T = len(framelogprob)
+        # compute the transition posterior
+        trans_posts = np.tile(.0, (T, self.n_components, self.n_components))
+        # Initiate the first step
+        for i in range(self.n_components):
+            for j in range(self.n_components):
+                trans_posts[0][i][j] = framelogprob[0][i] * self.startprob[j] * bwdlattice[0][i] * transmat[0][j][i] / lpr
+
+        for t in range(1, T):
+            for i in range(self.n_components):
+                for j in range(self.n_components):
+                    trans_posts[t][i][j] = framelogprob[t][i] * fwdlattice[t-1][j] * bwdlattice[t][i] * transmat[t][j][i] / lpr
+
+        self.trans_posts = trans_posts
+
+        # compute the state posterior
+        state_posts = np.zeros((T, self.n_components))
+        for t in range(T):
+            for i in range(self.n_components):
+                state_posts[t][i] = fwdlattice[t][i] * bwdlattice[t][i]
+        state_posts = state_posts / lpr
+        self.state_posts = state_posts
+
 
     def _do_forward_pass(self, transmat, framelogprob):
         """  Compute the forward lattice
@@ -159,32 +200,6 @@ class _BaseIOHMM():
                     bwdlattice[t][i] += transmat[t][i][j] * bwdlattice[t+1][j] * framelogprob[t+1][j]
             bwdlattice[t] = bwdlattice[t] * self.scaling_factors[t]
         return bwdlattice
-
-    def _test_do_forward_pass(self, transmat, framelogprob, ins_seq):
-        T = len(ins_seq)
-        fwdlattice = np.zeros((T, self.n_components))
-        scaling_factors = np.zeros(T)
-
-        #initiate the fwdlattice[0]
-        for i in range(self.n_components):
-            tmp = 0.0
-            for j in range(self.n_components):
-                tmp += transmat[0][j][i] * self.startprob[j]
-            fwdlattice[0][i] = tmp * framelogprob[0][i]
-        scaling_factors[0] = np.sum(fwdlattice[0])
-        fwdlattice[0] = fwdlattice[0] / scaling_factors[0]
-
-        for t in range(1, T):
-            for i in range(self.n_components):
-                tmp = .0
-                for j in range(self.n_components):
-                    tmp += transmat[t][j][i] * fwdlattice[t-1][j]
-                fwdlattice[t][i] = framelogprob[t][i] * tmp
-            scaling_factors[t] = np.sum(fwdlattice[t])
-            fwdlattice[t] = fwdlattice[t] / scaling_factors[t]
-
-        likelihood = np.exp(-1*np.sum(np.log(1/scaling_factors)))
-        return likelihood, fwdlattice
 
 
 
