@@ -126,12 +126,11 @@ class _BaseIOHMM():
         # do maxization step in HMM. In base class we do M step to update the parameters for transition
         # weight matrix
         # Based on Yoshua Bengio, Paolo Frasconi. Input output HMM's for sequence processing
-
-
+        pass
 
     def _compute_transmat(self, ins_seq):
         """ Compute the dynamic transition weight matrix for each time step"""
-        #initiate the dynamic transition matrix
+        # initiate the dynamic transition matrix
         transmat = np.tile(0.0, (len(ins_seq, self.n_components, self.n_components)))
         for t in range(len(ins_seq)):
             u = ins_seq[t][np.newaxis].T  # transform u into column vector
@@ -200,10 +199,6 @@ class _BaseIOHMM():
                     bwdlattice[t][i] += transmat[t][i][j] * bwdlattice[t+1][j] * framelogprob[t+1][j]
             bwdlattice[t] = bwdlattice[t] * self.scaling_factors[t]
         return bwdlattice
-
-
-
-
 
 
     def _init(self, obs, params):
