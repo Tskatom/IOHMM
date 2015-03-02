@@ -105,13 +105,13 @@ class _BaseIOHMM():
                 ins_seq = self.ins[i]
 
                 transmat = self._compute_transmat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
-                framelogprob = self._compute_likelihood(ins_seq, obs_seq)  # compute p(y|U, x_t=i) with shape (t, n)
+                frameprob = self._compute_obs_prob(ins_seq, obs_seq)  # compute p(y|U, x_t=i) with shape (t, n)
 
-                lpr, fwdlattice = self._do_forward_pass(transmat, framelogprob, ins_seq)
-                bwdlattice = self._do_backward_pass(transmat, framelogprob, ins_seq)
+                lpr, fwdlattice = self._do_forward_pass(transmat, frameprob, ins_seq)
+                bwdlattice = self._do_backward_pass(transmat, frameprob, ins_seq)
 
                 # compute the sufficient statistic: transition posterior and state posterior
-                self._compute_sufficient_static(self, transmat, framelogprob,
+                self._compute_sufficient_static(self, transmat, frameprob,
                                                 fwdlattice, bwdlattice, lpr)
             logprob.append(lpr)
             if i > 0 and logprob[-1] - logprob[-2] < self.thresh:
@@ -179,21 +179,21 @@ class _BaseIOHMM():
         state_posts = state_posts / lpr
         self.state_posts = state_posts
 
-    def _do_forward_pass(self, transmat, framelogprob):
+    def _do_forward_pass(self, transmat, frameprob):
         """  Compute the forward lattice
         :param transmat:
-        :param framelogprob:
+        :param frameprob:
         :return: p(obs_seq|ins_seq) and p(x_t=i, y_(1:t)|u_(1:t))
         """
-        T = len(framelogprob)
+        T = len(frameprob)
         fwdlattice = np.zeros((T, self.n_components))
         scaling_factors = np.zeros(T)
-        fwdlattice[0] = np.dot(transmat[0].T, self.startprob[np.newaxis].T).flatten() * framelogprob[0]
+        fwdlattice[0] = np.dot(transmat[0].T, self.startprob[np.newaxis].T).flatten() * frameprob[0]
         scaling_factors[0] = 1 / np.sum(fwdlattice[0])
         fwdlattice[0] = fwdlattice[0] * scaling_factors[0]
 
         for t in range(1, T):
-            fwdlattice[t] = np.dot(transmat[0].T, fwdlattice[t-1][np.newaxis].T).flatten() * framelogprob[t]
+            fwdlattice[t] = np.dot(transmat[0].T, fwdlattice[t-1][np.newaxis].T).flatten() * frameprob[t]
             scaling_factors[t] = 1 / np.sum(fwdlattice[t])
             fwdlattice[t] = fwdlattice[t] * scaling_factors[t]
 
