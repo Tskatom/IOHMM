@@ -8,7 +8,7 @@ The implementation is based on:
     - scikit-learn HMM implementation
 """
 from __future__ import division
-__author__ = 'weiwang'
+__author__ = 'Wei Wang'
 __email__ = 'tskatom@vt.edu'
 
 
@@ -16,9 +16,8 @@ import string
 import numpy as np
 from util import extmath
 
-ZEROLOGPROB = -1e200
 EPS = np.finfo(float).eps
-NEGINF = -np.inf
+
 
 class _BaseIOHMM():
     """
@@ -81,9 +80,10 @@ class _BaseIOHMM():
         self.input_dim = ins[0].shape[1]  # the dimension of input
 
         # construct the transition weighted matrix
-        self.trans_weight_mat = np.tile(1/(self.input_dim + 1),
-                                        (self.n_components, self.n_components, self.input_dim + 1))
+        self.trans_weight_mat = np.tile(1, (self.n_components, self.n_components, self.input_dim))
 
+        # construct the weight matrix for poisson regression
+        self.obs_weight_mat = np.tile(1, (self.n_components, self.input_dim))
 
     def fit(self, obs):
         """ Estimate the model parameters
@@ -98,15 +98,13 @@ class _BaseIOHMM():
 
         self._init(obs, self.init_params)  # initiate the model
         logprob = []
-        for i in range(self.n_iter):
+        for n in range(self.n_iter):
             # Expectation step
-            stats = self._initialize_sufficient_statistics()
-
             for i in range(len(obs)):
                 obs_seq = obs[i]
                 ins_seq = self.ins[i]
 
-                transmat = self._compute_transmat(ins_seq) # compute dynamic transition matrix with shape (t, n, n)
+                transmat = self._compute_transmat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
                 framelogprob = self._compute_likelihood(ins_seq, obs_seq)  # compute p(y|U, x_t=i) with shape (t, n)
 
                 lpr, fwdlattice = self._do_forward_pass(transmat, framelogprob, ins_seq)
@@ -123,22 +121,39 @@ class _BaseIOHMM():
             self._do_mstep()
 
     def _do_mstep(self):
-        # do maxization step in HMM. In base class we do M step to update the parameters for transition
+        # do maximization step in HMM. In base class we do M step to update the parameters for transition
         # weight matrix
         # Based on Yoshua Bengio, Paolo Frasconi. Input output HMM's for sequence processing
         pass
 
     def _compute_transmat(self, ins_seq):
-        """ Compute the dynamic transition weight matrix for each time step"""
+        """ Compute the dynamic transition weight matrix for each time step
+        phi_(ij,t) = p(x_t=i|x_{t-1}=j, u_t). In the weight matrix w[j, i] = p(x_t+1=i | x_t=j)
+        """
         # initiate the dynamic transition matrix
-        transmat = np.tile(0.0, (len(ins_seq, self.n_components, self.n_components)))
+        transmat = np.tile(0.0, (len(ins_seq), self.n_components, self.n_components))
         for t in range(len(ins_seq)):
             u = ins_seq[t][np.newaxis].T  # transform u into column vector
-            for i in range(self.n_components):
-                weightMat = self.trans_weight_mat[i]
-                prob = extmath.softmax(np.dot(weightMat, u))
-                transmat[i] = prob
+            for j in range(self.n_components):
+                weight_mat = self.trans_weight_mat[j]
+                alphas = np.dot(weight_mat, u)
+                prob = extmath.softmax(alphas)
+                transmat[t][j] = prob.T
         return transmat
+
+    def _compute_obs_prob(self, ins_seq, obs_seq):
+        """
+        Compute the poisson regression probability
+        """
+        T = len(ins_seq)
+        obs_prob = np.zeros((T, self.n_components))
+        for t in range(T):
+            u = ins_seq[t][np.newaxis].T
+            obs = obs_seq[t]
+            expec_y = np.dot(self.obs_weight_mat, u)
+            probs = extmath.poisson_likelihood(expec_y, obs)
+            obs_prob[t] = probs.T
+        return obs_prob
 
     def _compute_sufficient_static(self, transmat, framelogprob, fwdlattice, bwdlattice, lpr):
         T = len(framelogprob)
@@ -163,7 +178,6 @@ class _BaseIOHMM():
                 state_posts[t][i] = fwdlattice[t][i] * bwdlattice[t][i]
         state_posts = state_posts / lpr
         self.state_posts = state_posts
-
 
     def _do_forward_pass(self, transmat, framelogprob):
         """  Compute the forward lattice
@@ -200,7 +214,6 @@ class _BaseIOHMM():
             bwdlattice[t] = bwdlattice[t] * self.scaling_factors[t]
         return bwdlattice
 
-
     def _init(self, obs, params):
         """
         Initialize the model parameters
@@ -212,9 +225,6 @@ class _BaseIOHMM():
         """""
         pass
 
-    def _initialize_sufficient_statistics(self):
-        # Initialize the sufficient statistics
-        pass
 
 
 
