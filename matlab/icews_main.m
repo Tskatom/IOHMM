@@ -1,8 +1,11 @@
-data = readtable('/home/weiw/workspace/data/icews/icews_test_data/Iraq_Iraq.csv', 'Delimiter', '\t');
+function [scores] = icews_main(datafile, label)
+datafile
+data = readtable(datafile, 'Delimiter', '\t');
+%data = readtable('/home/weiw/workspace/data/icews/icews_test_data/Iraq_Iraq.csv', 'Delimiter', '\t');
 data_arr = table2array(data);
 [T, D] = size(data_arr);
-scores = [];
 L = 10;
+scores = [];
 for i=L:-1:2
     trainX = data_arr(1:T-i,1:D-1);
     max_t = max(trainX);
@@ -26,7 +29,7 @@ for i=L:-1:2
         pred_y = 0;
     end
     score = evaluation(pred_y, testY);
-    r = sprintf('Preidct %d , real value %d, score: %0.2f\n', pred_y, testY, score)
-    scores = [scores r];
+    r = sprintf('%s --> Preidct %d , real value %d, score: %0.2f ', label, pred_y, testY, score)
+    scores = [scores r]
 end
-scores
+end
