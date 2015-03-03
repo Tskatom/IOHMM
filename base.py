@@ -15,6 +15,8 @@ __email__ = 'tskatom@vt.edu'
 import string
 import numpy as np
 from util import extmath
+from scipy.optimize import minimize
+import math
 
 EPS = np.finfo(float).eps
 
@@ -64,12 +66,13 @@ class _BaseIOHMM():
     _init(), _initiatelize_sufficient_statistics() and _do_mstep()
     """
 
-    def __init__(self, n_components, ins, startprob=None, algorithm="viterbi",
+    def __init__(self, n_components, ins, obs, startprob=None, algorithm="viterbi",
                  random_state=None, n_iter=20, thresh=1e-2, params=string.ascii_letters,
                  init_params=string.ascii_letters):
 
         self.n_components = n_components
         self.ins = ins
+        self.obs = obs;
         self.n_iter = n_iter
         self.thresh = thresh
         self.params = params
@@ -122,10 +125,79 @@ class _BaseIOHMM():
             # Maximization step
             self._do_mstep()
 
+    def obj_trans_subnet(self, theta, j):
+        # maximize the subnetwork one by one
+        # theta is a K * D matrix (K: status#, D: dim#)
+        obj = 0
+        for p in range(len(self.ins)):
+            ins_seq = self.ins[p]
+            for t in range(len(ins_seq)):
+                u = ins_seq[t][np.newaxis].T
+                for i in range(self.n_components):
+                    obj += self.trans_posts[t][j][i] * (np.exp(np.dot(theta[i], u)) - extmath.log_sum(theta, u))
+        return obj
+
+    def jac_obj_trans(self, theta, j):
+        i_mat = np.identity(j)
+        jac = np.zeros((self.n_components, self.input_dim))
+
+        for s in range(self.n_components):
+            dev = np.zeros(self.input_dim)
+            for p in range(len(self.ins)):
+                ins_seq = self.ins[p]
+                for t in range(len(ins_seq)):
+                    u = ins_seq[t][np.newaxis].T
+                    for i in range(self.n_components):
+                        dev += self.trans_posts[t][j][i] * (i_mat[i][s] - np.exp(theta[s], u)/sum(np.exp(theta, u))) * u
+            jac[s] = dev.flatten()
+        return jac
+
+    def hess_obj_trans(self, theta, j):
+        hess = np.zeros((self.n_components*self.input_dim, self.n_components*self.input_dim))
+        i_mat = np.identity(self.n_components)
+
+        ins_seq = self.ins[0]
+
+        for s in range(self.n_components):
+            for p in range(self.n_components):
+                tmp_ht = np.diag(np.sum(self.trans_posts[:,j,:], axis=1))
+                tmp_sp = np.zeros(len(ins_seq))
+                for t in range(len(ins_seq)):
+                    u = ins_seq[t][np.newaxis].T
+                    tmp_sp[t] = (np.exp(np.dot(theta[s], u))/np.sum(np.dot(theta, u))) * (np.exp(np.dot(theta[p], u))/np.sum(np.dot(theta, u)) - i_mat[s,p])
+                tmp_sp = np.diag(tmp_sp)
+                tmp_mat = ins_seq.T.dot(tmp_ht).dot(tmp_sp).dot(ins_seq)
+                hess[s][p] = tmp_mat
+        return hess
+
+    def obj_obs_subnet(self, beta, j):
+        # maximize the subnetwork one by one
+        # theta is a D * 1 vector
+        obj = 0
+        for p in range(len(self.obs)):
+            obs_seq = self.obs[p]
+            ins_seq = self.ins[p]
+            for t in range(len(obs_seq)):
+                o = obs_seq[t]
+                u = ins_seq[t][np.newaxis].T
+                obj += self.state_posts[t][j] * (-np.exp(np.dot(beta, u)) + o * np.dot(beta, u) - np.log(math.factorial(o)))
+        return obj
+
+    def jac_obs_subnet(self, beta, j):
+        ins_seq = self.ins[0]
+        obs_seq = self.obs[0]
+
+        tmp_gt = self.state_posts[:,j]
+        tmp_delt = obs_seq - np.exp(ins_seq, beta)
+        jac = np.dot(tmp_gt[np.newaxis].T, np.diag(tmp_delt), ins_seq)
+
+
+
     def _do_mstep(self):
         # do maximization step in HMM. In base class we do M step to update the parameters for transition
         # weight matrix
         # Based on Yoshua Bengio, Paolo Frasconi. Input output HMM's for sequence processing
+
         pass
 
     def _compute_transmat(self, ins_seq):
