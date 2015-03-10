@@ -67,31 +67,25 @@ class _BaseIOHMM():
     _init(), _initiatelize_sufficient_statistics() and _do_mstep()
     """
 
-    def __init__(self, n_components, ins, obs, start_prob=None, algorithm="viterbi",
-                 random_state=None, n_iter=20, thresh=1e-8):
+    def __init__(self, n_components, ins, obs, startprob=None, algorithm="viterbi",
+                 random_state=None, n_iter=20, thresh=1e-2):
 
         self.n_components = n_components
         self.ins = ins
         self.obs = obs
         self.n_iter = n_iter
         self.thresh = thresh
-        self.start_prob = start_prob
+        self.startprob = startprob
         self.algorithm = algorithm
         self.random_state = random_state
 
         # add dummy parameter to the input matrix
         for p in range(len(self.ins)):
-            # normalize the input data
-            x = np.matrix(self.ins[p])
-            mean_x = np.mean(x, axis=1)
-            std_x = np.std(x, axis=1)
-            self.ins[p] = (x - mean_x)/std_x
-
+            self.ins[p] = np.matrix(self.ins[p])
             dummy = np.matrix(np.ones(len(self.ins[p]))).T
             self.ins[p] = np.hstack([dummy, self.ins[p]])
             self.obs[p] = np.matrix(self.obs[p]).T
-
-        self.start_prob = np.matrix(start_prob).T
+        self.startprob = np.matrix(startprob).T
 
         self.input_dim = self.ins[0].shape[1]  # the dimension of input
 
@@ -101,8 +95,7 @@ class _BaseIOHMM():
         self.trans_weight_mat = self.trans_weight_mat.reshape(self.n_components, self.n_components, self.input_dim)
 
         # construct the weight matrix for poisson regression
-        self.obs_weight_mat = np.random.random(self.n_components * self.input_dim)
-        self.obs_weight_mat = self.obs_weight_mat.reshape(self.n_components, self.input_dim)
+        self.obs_weight_mat = np.tile(0.01, (self.n_components, self.input_dim))
 
 
     def fit(self):
@@ -117,33 +110,138 @@ class _BaseIOHMM():
         """
         obs = self.obs
         ins = self.ins
-        log_prob = []
+        logprob = []
         for n in range(self.n_iter):
             # Expectation step
             for i in range(len(obs)):
                 obs_seq = obs[i]
                 ins_seq = ins[i]
 
-                trans_mat = self._compute_transmat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
-                frame_prob = self._compute_obs_prob(ins_seq, obs_seq)  # compute p(y|U, x_t=i) with shape (t, n)
+                transmat = self._compute_transmat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
+                frameprob = self._compute_obs_prob(ins_seq, obs_seq)  # compute p(y|U, x_t=i) with shape (t, n)
 
-                lpr, fwd_lattice = self._do_forward_pass(trans_mat, frame_prob)
-                bwd_lattice = self._do_backward_pass(trans_mat, frame_prob)
+                lpr, fwdlattice = self._do_forward_pass(transmat, frameprob)
+                bwdlattice = self._do_backward_pass(transmat, frameprob)
 
                 # compute the sufficient statistic: transition posterior and state posterior
-                self._compute_sufficient_static(trans_mat, frame_prob,
-                                                fwd_lattice, bwd_lattice)
-            log_prob.append(np.log(lpr))
-            print n,'--------------log_prob,', log_prob[n]
-            if n > 1 and abs(log_prob[-1] - log_prob[-2]) < self.thresh:
+                self._compute_sufficient_static(transmat, frameprob,
+                                                fwdlattice, bwdlattice)
+            logprob.append(np.log(lpr))
+            print n,'--------------logprob,',logprob[n]
+            if n > 1 and logprob[-1] - logprob[-2] < self.thresh:
                 print 'Converged'
                 break
 
             # Maximization step
-            self._do_maxstep()
-        print "Fitted Results:  "
-        print "trans_weight_mat", self.trans_weight_mat
-        print "obs_weight_mat", self.obs_weight_mat
+            self._do_maxstep2()
+
+    def obj_trans_subnet(self, theta, j):
+        # maximize the subnetwork one by one
+        # theta is a K * D matrix (K: status#, D: dim#)
+        theta = theta.reshape(self.n_components, self.input_dim)
+        obj = 0
+        for p in range(len(self.ins)):
+            ins_seq = self.ins[p]
+            for t in range(len(ins_seq)):
+                u = ins_seq[t][np.newaxis].T
+                for i in range(self.n_components):
+                    obj += self.trans_posts[t][j][i] * (np.exp(np.dot(theta[i], u)) - extmath.log_sum(theta, u))
+        return float(obj)
+
+    def jac_obj_trans(self, theta, j):
+        theta = theta.reshape(self.n_components, self.input_dim)
+        i_mat = np.identity(self.n_components)
+        jac = np.zeros((self.n_components, self.input_dim))
+
+        for s in range(self.n_components):
+            dev = np.zeros((self.input_dim, 1))
+            for p in range(len(self.ins)):
+                ins_seq = self.ins[p]
+                for t in range(len(ins_seq)):
+                    u = ins_seq[t][np.newaxis].T
+                    for i in range(self.n_components):
+                        tmp = float(self.trans_posts[t][j][i] * (i_mat[i][s] - np.exp(np.dot(theta[s], u)) / sum(np.exp(np.dot(theta, u)))))
+                        dev += tmp * u
+            jac[s] = dev.flatten()
+        return jac.flatten()
+
+    def hess_obj_trans(self, theta, j):
+        theta = theta.reshape(self.n_components, self.input_dim)
+        hess = np.zeros((self.n_components*self.input_dim, self.n_components*self.input_dim))
+        i_mat = np.identity(self.n_components)
+
+        ins_seq = self.ins[0]
+
+        for s in range(self.n_components):
+            for p in range(self.n_components):
+                tmp_ht = np.diag(np.sum(self.trans_posts[:,j,:], axis=1))
+                tmp_sp = np.zeros(len(ins_seq))
+                for t in range(len(ins_seq)):
+                    u = ins_seq[t][np.newaxis].T
+                    tmp_sp[t] = (np.exp(np.dot(theta[s], u))/np.sum(np.dot(theta, u))) * (np.exp(np.dot(theta[p], u))/np.sum(np.dot(theta, u)) - i_mat[s,p])
+                tmp_sp = np.diag(tmp_sp)
+                tmp_mat = ins_seq.T.dot(tmp_ht).dot(tmp_sp).dot(ins_seq)
+                hess[s*self.input_dim:(s+1)*self.input_dim, p*self.input_dim:(p+1)*self.input_dim] = tmp_mat
+        return hess
+
+    def obj_obs_subnet(self, beta, j):
+        # maximize the subnetwork one by one
+        # theta is a D * 1 vector
+        obj = 0
+        for p in range(len(self.obs)):
+            obs_seq = self.obs[p]
+            ins_seq = self.ins[p]
+            for t in range(len(obs_seq)):
+                o = obs_seq[t]
+                u = ins_seq[t][np.newaxis].T
+                obj += self.state_posts[t][j] * (-np.exp(np.dot(beta, u)) + o * np.dot(beta, u) - np.log(math.factorial(o)))
+        return float(obj)
+
+    def jac_obs_subnet(self, beta, j):
+        ins_seq = self.ins[0]
+        obs_seq = self.obs[0]
+
+        tmp_gt = self.state_posts[:,j]
+        tmp_delt = obs_seq - np.exp(np.dot(ins_seq, beta))
+        jac = np.dot(ins_seq.T, np.diag(tmp_delt)).dot(tmp_gt[np.newaxis].T)
+        return jac.flatten()
+
+    def hess_obs_subnet(self, beta, j):
+        ins_seq = self.ins[0]
+        tmp_gt = self.state_posts[:,j]
+        tmp_exp = -np.exp(np.dot(ins_seq, beta))
+        hess = ins_seq.T.dot(np.diag(tmp_gt)).dot(np.diag(tmp_exp)).dot(ins_seq)
+        return hess
+
+
+    def _do_mstep(self):
+        # do maximization step in HMM. In base class we do M step to update the parameters for transition
+        # weight matrix
+        # Based on Yoshua Bengio, Paolo Frasconi. Input output HMM's for sequence processing
+
+        # Maximize the transition weighted matrix
+        for j in range(self.n_components):
+            ini_theta = self.trans_weight_mat[j].flatten()
+            obj_func = partial(self.obj_trans_subnet, j=j)
+            jac_func = partial(self.jac_obj_trans, j=j)
+            hess_func = partial(self.hess_obj_trans, j=j)
+            res = minimize(obj_func, ini_theta, method='Newton-CG',
+                           jac=jac_func, hess=hess_func,
+                           options={'disp': True})
+            self.trans_weight_mat[j] = res.x.reshape(self.n_components, self.input_dim)
+
+        # Maximize the obs weighted matrix
+        for j in range(self.n_components):
+            ini_beta = self.obs_weight_mat[j]
+            obs_obj_func = partial(self.obj_obs_subnet, j=j)
+            obs_jac_func = partial(self.jac_obs_subnet, j=j)
+            obs_hess_func = partial(self.hess_obs_subnet, j=j)
+
+            obs_res = minimize(obs_obj_func, ini_beta, method='Newton-CG',
+                               jac=obs_jac_func, hess=obs_hess_func,
+                               options={'disp': True})
+            self.obs_weight_mat[j] = obs_res.x.flatten()
+
 
     def optimize_trans_beta(self, ins_seq, obs_seq, j, n_iter, threshold=1e-3):
         trans_theta = np.matrix(self.trans_weight_mat[j])
@@ -164,12 +262,6 @@ class _BaseIOHMM():
                 jac_s = np.squeeze(np.array(X.T * trans_post * I_s)) - np.squeeze(np.array(X.T * dia_matrix((prob_mu_s, 0), shape=(len(prob_mu_s), len(prob_mu_s))) * np.sum(trans_post, axis=1)))
                 jac_array[s, :] = jac_s
 
-                # check for the NAN in records
-                if np.isnan(np.min(jac_s)):
-                    print 'Encounter NAN', jac_s
-                    print trans_post
-                    sys.exit()
-
             jac_vec = np.matrix(jac_array.reshape(self.input_dim * self.n_components, 1))
             hess_array = np.zeros((self.input_dim * self.n_components, self.input_dim * self.n_components))
 
@@ -185,24 +277,19 @@ class _BaseIOHMM():
 
             hess_array = np.matrix(hess_array)
             trans_theta_old = trans_theta
-            try:
-                trans_theta = trans_theta - np.reshape(np.linalg.pinv(hess_array) * jac_vec, (self.n_components, self.input_dim))
-            except Exception as e:
-                print 'Failed to Converge!'
-                print 'jac_vec', jac_vec
-                print hess_array
-                sys.exit()
+            trans_theta = trans_theta - np.reshape(np.linalg.pinv(hess_array) * jac_vec, (self.n_components, self.input_dim))
             difference.append(np.max(trans_theta_old - trans_theta))
             if difference[-1] <= threshold:
                 break
         self.trans_weight_mat[j, :, :] = np.array(trans_theta)
+        print 'trans_theta ',trans_theta, len(difference), difference
 
     def optimize_obs_beta(self, ins_seq, obs_seq, j, n_iter, threshold=1e-3):
         Y =obs_seq
         X = ins_seq
 
         obs_beta = np.matrix(self.obs_weight_mat[j]).T
-        g = np.squeeze(self.state_posts[:, j])
+        g = np.squeeze(self.state_posts[:,j])
         diag_g = dia_matrix(([g], 0), shape=(len(g), len(g)))
         difference = []
         for n in range(n_iter):
@@ -218,10 +305,11 @@ class _BaseIOHMM():
             difference.append(np.max(beta_old - obs_beta))
             if difference[-1] <= threshold:
                 break
-        self.obs_weight_mat[j, :] = np.squeeze(np.array(obs_beta))
+        self.obs_weight_mat[j,:] = np.squeeze(np.array(obs_beta))
+        print 'obs_beta', np.squeeze(np.array(obs_beta)), len(difference)
 
 
-    def _do_maxstep(self):
+    def _do_maxstep2(self):
         # do maximization step in HMM. In base class we do M step to update the parameters for transition
         # weight matrix
         # Based on Yoshua Bengio, Paolo Frasconi. Input output HMM's for sequence processing
@@ -240,15 +328,15 @@ class _BaseIOHMM():
         phi_(ij,t) = p(x_t=i|x_{t-1}=j, u_t). In the weight matrix w[j, i] = p(x_t+1=i | x_t=j)
         """
         # initiate the dynamic transition matrix
-        trans_mat = np.tile(0.0, (len(ins_seq), self.n_components, self.n_components))
+        transmat = np.tile(0.0, (len(ins_seq), self.n_components, self.n_components))
         for t in range(len(ins_seq)):
             u = ins_seq[t].T # transform u into column vector
             for j in range(self.n_components):
                 weight_mat = np.matrix(self.trans_weight_mat[j])
                 alphas = weight_mat * u
                 prob = np.squeeze(np.array(extmath.softmax(alphas)))
-                trans_mat[t, j, :] = prob
-        return trans_mat
+                transmat[t, j, :] = prob
+        return transmat
 
     def _compute_obs_prob(self, ins_seq, obs_seq):
         """
@@ -260,22 +348,20 @@ class _BaseIOHMM():
         prob = extmath.poisson_likelihood(mu, obs_seq)
         return prob
 
-    def _compute_sufficient_static(self, tran_smat, frame_prob, fwd_lattice, bwd_lattice):
-        if np.isnan(np.min(fwd_lattice)) or np.isnan(np.min(bwd_lattice)):
-            print fwd_lattice, bwd_lattice
-            sys.exit()
-        T = len(frame_prob)
+    def _compute_sufficient_static(self, transmat, frameprob, fwdlattice, bwdlattice):
+        print 'transmat, framelogprob, fwdlattice, bwdlattice', type(transmat), type(frameprob), type(fwdlattice), type(bwdlattice)
+        T = len(frameprob)
         # compute the transition posterior
         trans_posts = np.tile(.0, (T, self.n_components, self.n_components))
         # Initiate the first step
         for j in range(self.n_components):
             for i in range(self.n_components):
-                trans_posts[0][j][i] = frame_prob[0, i] * self.start_prob[j,0] * bwd_lattice[0][i] * tran_smat[0][j][i]
+                trans_posts[0][j][i] = frameprob[0, i] * self.startprob[j,0] * bwdlattice[0][i] * transmat[0][j][i]
 
         for t in range(1, T):
             for j in range(self.n_components):
                 for i in range(self.n_components):
-                    trans_posts[t][j][i] = frame_prob[t, i] * fwd_lattice[t-1][j] * bwd_lattice[t][i] * tran_smat[t][j][i]
+                    trans_posts[t][j][i] = frameprob[t, i] * fwdlattice[t-1][j] * bwdlattice[t][i] * transmat[t][j][i]
 
         self.trans_posts = trans_posts
 
@@ -283,53 +369,53 @@ class _BaseIOHMM():
         state_posts = np.zeros((T, self.n_components))
         for t in range(T):
             for i in range(self.n_components):
-                state_posts[t][i] = fwd_lattice[t][i] * bwd_lattice[t][i] / self.scaling_factors[t]
+                state_posts[t][i] = fwdlattice[t][i] * bwdlattice[t][i] / self.scaling_factors[t]
         state_posts = state_posts
         self.state_posts = state_posts
 
 
-    def _do_forward_pass(self, trans_mat, frame_prob):
+    def _do_forward_pass(self, transmat, frameprob):
         """  Compute the forward lattice
-        :param trans_mat:
-        :param frame_prob:
+        :param transmat:
+        :param frameprob:
         :return: p(obs_seq|ins_seq) and p(x_t=i, y_(1:t)|u_(1:t))
         """
-        T = len(frame_prob)
-        fwd_lattice = np.zeros((T, self.n_components))
+        T = len(frameprob)
+        fwdlattice = np.zeros((T, self.n_components))
         scaling_factors = np.zeros(T)
-        t_mat = np.matrix(trans_mat[0]).T
-        fwd_lattice[0] = np.squeeze(np.multiply(t_mat * self.start_prob, frame_prob[0].T))
-        print 'frame_prob[0].T', frame_prob[0].T
-        scaling_factors[0] = 1 / np.sum(fwd_lattice[0])
-        fwd_lattice[0] = fwd_lattice[0] * scaling_factors[0]
+        t_mat = np.matrix(transmat[0]).T
+        fwdlattice[0] = np.squeeze(np.multiply(t_mat * self.startprob, frameprob[0].T))
+        scaling_factors[0] = 1 / np.sum(fwdlattice[0])
+        fwdlattice[0] = fwdlattice[0] * scaling_factors[0]
 
         for t in range(1, T):
-            t_mat = np.matrix(trans_mat[t]).T
-            #fwd_lattice[t] = np.squeeze(np.multiply(t_mat * np.matrix(fwd_lattice[t - 1]).T, frame_prob[t].T))
-            fwd_lattice[t] = np.squeeze(np.exp(np.log(t_mat * np.matrix(fwd_lattice[t - 1]).T) + np.log(frame_prob[t].T)))
-            print 'fwd_lattice[', t, ']', fwd_lattice[t]
-            scaling_factors[t] = 1 / np.sum(fwd_lattice[t])
-            if np.isnan(np.min(fwd_lattice[t])):
-                print 'fwd_lattice', fwd_lattice[t]
-                sys.exit()
-            fwd_lattice[t] = fwd_lattice[t] * scaling_factors[t]
+            t_mat = np.matrix(transmat[t]).T
+            fwdlattice[t] = np.squeeze(np.multiply(t_mat * np.matrix(fwdlattice[t-1]).T, frameprob[t].T))
+            scaling_factors[t] = 1 / np.sum(fwdlattice[t])
+            fwdlattice[t] = fwdlattice[t] * scaling_factors[t]
 
-        likelihood = np.exp(-1 * np.sum(np.log(scaling_factors)))
+        likelihood = np.exp(-1*np.sum(np.log(scaling_factors)))
         self.scaling_factors = scaling_factors
-        print 'Scaling_facotrs', scaling_factors
-        print 'likelihood', likelihood
-        return likelihood, fwd_lattice
+        return likelihood, fwdlattice
 
-    def _do_backward_pass(self, tran_smat, frame_prob):
-        # using the same scaling_factor as forward_pass
-        T = len(frame_prob)
-        bwd_lattice = np.ones((T, self.n_components))
-        bwd_lattice[T - 1] = bwd_lattice[T - 1] * self.scaling_factors[T - 1]
-        for t in range(T - 2, -1, -1):
+    def _do_backward_pass(self, transmat, frameprob):
+        # using the same scalingfactor as forward_pass
+        T = len(frameprob)
+        bwdlattice = np.ones((T, self.n_components))
+        bwdlattice[T-1] = bwdlattice[T-1] * self.scaling_factors[T-1]
+        for t in range(T-2, -1, -1):
             for i in range(self.n_components):
-                bwd_lattice[t][i] = .0
+                bwdlattice[t][i] = .0
                 for j in range(self.n_components):
-                    bwd_lattice[t][i] += tran_smat[t][i][j] * bwd_lattice[t + 1][j] * frame_prob[t + 1, j]
-            bwd_lattice[t] = bwd_lattice[t] * self.scaling_factors[t]
+                    bwdlattice[t][i] += transmat[t][i][j] * bwdlattice[t+1][j] * frameprob[t+1, j]
+            bwdlattice[t] = bwdlattice[t] * self.scaling_factors[t]
 
-        return bwd_lattice
+        return bwdlattice
+
+
+
+
+
+
+
+

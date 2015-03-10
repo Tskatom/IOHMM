@@ -1,0 +1,32 @@
+import base
+import pandas as pds
+import numpy as np
+
+# Load the dataset using Egypt data
+all_events_csv = "/home/weiwang/To_Jieping/icews_allevent_count/egypt_icews_parent_event_counts_2012_228.csv"
+events_count = pds.DataFrame.from_csv(all_events_csv, sep='\t', index_col=1)
+del events_count['20']
+del events_count['country']
+events_count = events_count.sort_index()['2012-01-01':]
+events_count = events_count.resample('W', how='sum').fillna(0)
+columns = events_count.columns
+target = "14"
+excepts = ["14"]
+features = [col for col in columns if col not in excepts]
+
+# construct the training and test set
+Ys = events_count["14"]
+Xs = events_count[columns]
+
+trainX = Xs['2012-01-08':'2014-12-28'].values
+trainY = Ys['2012-01-15':'2015-01-04'].values
+
+testX = Xs['2015-01-04':'2015-02-15'].values
+testY = Ys['2015-01-11':'2015-02-22'].values
+
+n_components = 4
+start_prob = np.array([0.2, 0.2, 0.3, 0.3])
+
+
+hmm = base._BaseIOHMM(n_components, [trainX], [trainY], start_prob=start_prob)
+hmm.fit()

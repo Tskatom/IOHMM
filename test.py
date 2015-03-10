@@ -13,24 +13,24 @@ import numpy.testing
 class TestIOHMM(unittest.TestCase):
     def setUp(self):
         np.random.seed(0)
-        n_components = 3
-        startprob = np.array([0.2, 0.2, 0.6])
+        n_components = 4
+        startprob = np.array([0.2, 0.2, 0.3, 0.3])
 
         sd_noise = 0.25
         poisson_mean = 2.0
-        sample_size = 20
-        Y = np.random.poisson(poisson_mean,sample_size)
-        X1 = 3 * Y + 2 + np.random. np.random.normal(0,sd_noise,sample_size)
-        X2 = 7 * Y + 5 + np.random.normal(0,sd_noise,sample_size)
-        X = np.matrix(np.vstack((X1,X2)))
+        sample_size = 300
+        Y = np.random.poisson(poisson_mean, sample_size)
+        X1 = 3 * Y + 2 + np.random. np.random.normal(0, sd_noise, sample_size)
+        X2 = 7 * Y + 5 + np.random.normal(0, sd_noise, sample_size)
+        X = np.matrix(np.vstack((X1, X2)))
         X = X.transpose()
-        self.hmm = _BaseIOHMM(n_components, [X], [Y], startprob=startprob)
+        self.hmm = _BaseIOHMM(n_components, [X], [Y], start_prob=startprob)
 
     def tearDown(self):
         del self.hmm
 
-    def _test_compute_transmat(self):
-        trans_prob = self.hmm._compute_transmat(self.hmm.ins[0])
+    def _test_compute_trans_mat(self):
+        trans_prob = self.hmm._compute_trans_mat(self.hmm.ins[0])
         print trans_prob.shape
 
     def _test_obs_prob(self):
@@ -42,19 +42,19 @@ class TestIOHMM(unittest.TestCase):
     def _test_forward_lattice(self):
         ins_seq = self.hmm.ins[0]
         obs_seq = self.hmm.obs[0]
-        transmat = self.hmm._compute_transmat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
-        frameprob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
-        lpr, fwdlattice = self.hmm._do_forward_pass(transmat, frameprob)
-        print lpr, fwdlattice
+        trans_mat = self.hmm._compute_trans_mat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
+        frame_prob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
+        lpr, fwd_lattice = self.hmm._do_forward_pass(trans_mat, frame_prob)
+        print lpr, fwd_lattice
 
     def _test_backward_lattice(self):
         ins_seq = self.hmm.ins[0]
         obs_seq = self.hmm.obs[0]
-        transmat = self.hmm._compute_transmat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
-        frameprob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
-        lpr, fwdlattice = self.hmm._do_forward_pass(transmat, frameprob)
-        bwdlattice = self.hmm._do_backward_pass(transmat, frameprob)
-        print bwdlattice, lpr, fwdlattice
+        trans_mat = self.hmm._compute_trans_mat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
+        frame_prob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
+        lpr, fwd_lattice = self.hmm._do_forward_pass(trans_mat, frame_prob)
+        bwd_lattice = self.hmm._do_backward_pass(trans_mat, frame_prob)
+        print bwd_lattice, lpr, fwd_lattice
 
     def _test_softmax(self):
         alphas = np.array([0, 0, 0])
@@ -82,32 +82,32 @@ class TestIOHMM(unittest.TestCase):
     def _test_compute_sufficient_static(self):
         ins_seq = self.hmm.ins[0]
         obs_seq = self.hmm.obs[0]
-        transmat = self.hmm._compute_transmat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
-        frameprob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
-        lpr, fwdlattice = self.hmm._do_forward_pass(transmat, frameprob)
-        bwdlattice = self.hmm._do_backward_pass(transmat, frameprob)
-        self.hmm._compute_sufficient_static(transmat, frameprob, fwdlattice, bwdlattice)
+        trans_mat = self.hmm._compute_trans_mat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
+        frame_prob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
+        lpr, fwd_lattice = self.hmm._do_forward_pass(trans_mat, frame_prob)
+        bwd_lattice = self.hmm._do_backward_pass(trans_mat, frame_prob)
+        self.hmm._compute_sufficient_static(trans_mat, frame_prob, fwd_lattice, bwd_lattice)
         print self.hmm.trans_posts
         print self.hmm.state_posts
 
     def _test_opt_obs_beta(self):
         ins_seq = self.hmm.ins[0]
         obs_seq = self.hmm.obs[0]
-        transmat = self.hmm._compute_transmat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
-        frameprob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
-        lpr, fwdlattice = self.hmm._do_forward_pass(transmat, frameprob)
-        bwdlattice = self.hmm._do_backward_pass(transmat, frameprob)
-        self.hmm._compute_sufficient_static(transmat, frameprob, fwdlattice, bwdlattice)
+        trans_mat = self.hmm._compute_trans_mat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
+        frame_prob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
+        lpr, fwd_lattice = self.hmm._do_forward_pass(trans_mat, frame_prob)
+        bwd_lattice = self.hmm._do_backward_pass(trans_mat, frame_prob)
+        self.hmm._compute_sufficient_static(trans_mat, frame_prob, fwd_lattice, bwd_lattice)
         self.hmm.optimize_obs_beta(ins_seq, obs_seq, 0, 100)
 
     def _test_optimize_trans_beta(self):
         ins_seq = self.hmm.ins[0]
         obs_seq = self.hmm.obs[0]
-        transmat = self.hmm._compute_transmat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
-        frameprob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
-        lpr, fwdlattice = self.hmm._do_forward_pass(transmat, frameprob)
-        bwdlattice = self.hmm._do_backward_pass(transmat, frameprob)
-        self.hmm._compute_sufficient_static(transmat, frameprob, fwdlattice, bwdlattice)
+        trans_mat = self.hmm._compute_trans_mat(ins_seq)  # compute dynamic transition matrix with shape (t, n, n)
+        frame_prob = self.hmm._compute_obs_prob(ins_seq, obs_seq)
+        lpr, fwd_lattice = self.hmm._do_forward_pass(trans_mat, frame_prob)
+        bwd_lattice = self.hmm._do_backward_pass(trans_mat, frame_prob)
+        self.hmm._compute_sufficient_static(trans_mat, frame_prob, fwd_lattice, bwd_lattice)
         self.hmm.optimize_trans_beta(ins_seq, obs_seq, 0, 100)
 
     def test_fit(self):
