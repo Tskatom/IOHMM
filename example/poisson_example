@@ -15,8 +15,8 @@ excepts = ["14"]
 features = [col for col in columns if col not in excepts]
 
 # construct the training and test set
-Ys = events_count["14"]
-Xs = events_count[columns]
+Ys = events_count["17"]
+Xs = events_count[['14', '15', '16', '17', '18']]
 
 trainX = Xs['2012-01-08':'2014-12-28'].values
 trainY = Ys['2012-01-15':'2015-01-04'].values
@@ -24,9 +24,10 @@ trainY = Ys['2012-01-15':'2015-01-04'].values
 testX = Xs['2015-01-04':'2015-02-15'].values
 testY = Ys['2015-01-11':'2015-02-22'].values
 
-n_components = 4
-start_prob = np.array([0.2, 0.2, 0.3, 0.3])
-
+n_components = 3
+start_prob = np.array([0.8, 0.1, 0.1])
 
 hmm = base._BaseIOHMM(n_components, [trainX], [trainY], start_prob=start_prob)
 hmm.fit()
+
+print trainY
