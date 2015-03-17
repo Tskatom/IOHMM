@@ -5,13 +5,8 @@ from scipy.sparse import dia_matrix
 class PoissonRegression():
     #Implements a poisson generalized linear model in python
     def __init__(self, X, Y):
-        #Normalize the X values
-        for i in range(X.shape[1]):
-            X[:,i] = (X[:,i] - np.mean(X[:,i])) / np.std(X[:,i])
-        #Add a dummy variable for the intercept
-        dummy = (np.matrix(np.ones(len(X)))).transpose()
-        self.X = np.hstack((dummy,X))
-        self.Y = np.matrix(Y).transpose()
+        self.X = X
+        self.Y = Y
         #Initialize beta
         self.beta = np.matrix(np.ones(self.X.shape[1]))
         self.beta = self.beta.transpose()
@@ -32,7 +27,7 @@ class PoissonRegression():
         predictions = np.asarray(np.squeeze(predictions))[0]
         return predictions
 
-    def fit(self,n_iter = 100):
+    def fit(self, n_iter = 100):
         #Fits the model using iteratively weighted least squares
         for i in range(n_iter):
             nu = self.X * self.beta
